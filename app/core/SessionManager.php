@@ -1,86 +1,79 @@
 <?php
 
-function session_manager_start(): void
+function initialiserUtilisateurs()
 {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
+    if (!isset($_SESSION['users'])) {
+
+        $_SESSION['users'] = [
+
+            [
+                'id' => 1,
+                'nom' => 'Admin Gérant',
+                'email' => 'gerant@cotisations.com',
+                'password' => password_hash('gerant123', PASSWORD_DEFAULT),
+                'role' => 'gerant'
+            ],
+
+            [
+                'id' => 2,
+                'nom' => 'Coach',
+                'email' => 'coach@cotisations.com',
+                'password' => password_hash('coach123', PASSWORD_DEFAULT),
+                'role' => 'coach'
+            ]
+
+        ];
     }
 }
 
-function session_get(string $key, mixed $default = null): mixed
+function connexion($email, $motDePasse)
 {
-    return $_SESSION[$key] ?? $default;
-}
+    foreach ($_SESSION['users'] as $user) {
 
-function session_set(string $key, mixed $value): void
-{
-    $_SESSION[$key] = $value;
-}
+        if ($user['email'] == $email &&
+            password_verify($motDePasse, $user['password'])) {
 
-function session_has(string $key): bool
-{
-    return isset($_SESSION[$key]);
-}
+            $_SESSION['user'] = [
+                'id' => $user['id'],
+                'nom' => $user['nom'],
+                'email' => $user['email'],
+                'role' => $user['role']
+            ];
 
-
-
-function session_destroy_all(): void
-{
-    $_SESSION = [];
-    if (ini_get('session.use_cookies')) {
-        $params = session_get_cookie_params();
-        setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
-    }
-    session_destroy();
-}
-
-function session_collection_push(string $key, array $item): array
-{
-    $collection = session_get($key, []);
-    $ids = array_column($collection, 'id');
-    $item['id'] = $ids ? max($ids) + 1 : 1;
-    $collection[] = $item;
-    session_set($key, $collection);
-    return $item;
-}
-
-function session_collection_find(string $key, int $id): ?array
-{
-    foreach (session_get($key, []) as $item) {
-        if ((int) $item['id'] === $id) {
-            return $item;
+            return true;
         }
     }
-    return null;
+
+    return false;
 }
 
-function flash_set(string $type, string $message): void
+function utilisateurConnecte()
 {
-    session_set('_flash', ['type' => $type, 'message' => $message]);
+    return $_SESSION['user'] ?? null;
 }
 
-function flash_get(): ?array
+function estConnecte()
 {
-    $flash = session_get('_flash');
-    session_set('_flash', null);
-    return $flash;
+    return isset($_SESSION['user']);
 }
 
-
-function csrf_token(): string
+function estGerant()
 {
-    if (!session_has('_csrf_token')) {
-        session_set('_csrf_token', bin2hex(random_bytes(32)));
-    }
-    return session_get('_csrf_token');
+    return estConnecte() && $_SESSION['user']['role'] == 'gerant';
 }
 
-function csrf_field(): string
+function estCoach()
 {
-    return '<input type="hidden" name="_csrf" value="' . e(csrf_token()) . '">';
+    return estConnecte() && $_SESSION['user']['role'] == 'coach';
 }
 
-function csrf_verify(?string $token): bool
+function estApprenant()
 {
-    return $token !== null && session_has('_csrf_token') && hash_equals(session_get('_csrf_token'), $token);
+    return estConnecte() && $_SESSION['user']['role'] == 'apprenant';
+}
+
+function deconnexion()
+{
+    unset($_SESSION['user']);
+    session_destroy();
 }
