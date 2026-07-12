@@ -1,0 +1,50 @@
+@startuml UseCase_Cotisations_v2
+left to right direction
+
+actor "Apprenant" as Apprenant
+actor "Gérant" as Gerant
+actor "Coach Superviseur" as Coach
+
+' Le Gérant est un Apprenant avec un rôle supplémentaire
+Apprenant <|-- Gerant
+
+rectangle "Gestion des Cotisations" {
+  usecase "S'authentifier" as UC1
+  usecase "S'auto-inscrire (formulaire)" as UC2b
+  usecase "Paramétrer cotisation hebdo" as UC2
+  usecase "Créer campagne ponctuelle" as UC3
+  usecase "Enregistrer un paiement" as UC4
+  usecase "Ventiler paiement sur semaines" as UC5
+  usecase "Gérer les apprenants (CRUD)" as UC6
+  usecase "Importer apprenants (Excel/CSV)" as UC7
+  usecase "Reprendre les passifs\n(dettes / historique antérieur)" as UC7b
+  usecase "Consulter tableau croisé" as UC8
+  usecase "Relancer retardataires" as UC9
+  usecase "Consulter mon solde" as UC10
+  usecase "Consulter mon historique" as UC10b
+  usecase "Voir mes notifications" as UC11
+  usecase "Consulter statistiques globales" as UC12
+  usecase "Auditer les recettes (lecture seule)" as UC13
+}
+
+Apprenant --> UC1
+Apprenant --> UC2b
+Apprenant --> UC10
+Apprenant --> UC10b
+Apprenant --> UC11
+
+Gerant --> UC2
+Gerant --> UC3
+Gerant --> UC4
+Gerant --> UC6
+Gerant --> UC7
+Gerant --> UC7b
+Gerant --> UC8
+Gerant --> UC9
+UC4 ..> UC5 : <<include>>
+UC3 ..> UC9 : <<extend>>
+
+Coach --> UC1
+Coach --> UC12
+Coach --> UC13
+@enduml

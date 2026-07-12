@@ -1,0 +1,20 @@
+@startuml Seq_PaiementHebdo_v2
+actor Gerant
+participant "GerantController" as GC
+participant "PaiementValidator" as PV
+participant "PaiementModel" as PM
+participant "SemaineModel" as SemM
+participant "SessionManager" as SM
+
+Gerant -> GC : POST /gerant/paiements/create
+GC -> PV : validate(data)
+PV --> GC : erreurs = []
+GC -> PM : create(data)
+PM -> SM : push('paiements', data)
+GC -> SemM : ventilerSemaines(apprenantId, montant)
+loop pour chaque semaine consécutive non payée
+  SemM -> SemM : marquerCommePayee(semaineId)
+end
+SemM --> GC : liste des semaines validées
+GC --> Gerant : redirection dashboard (mise à jour visuelle)
+@enduml

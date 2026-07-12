@@ -1,0 +1,30 @@
+@startuml Seq_Notifications_v2
+actor Gerant
+participant "GerantController" as GC
+participant "CampagneModel" as CM
+participant "SemaineModel" as SemM
+participant "NotificationService" as NS
+participant "Apprenant" as App
+
+== Notification de création d'un nouvel événement ==
+GC -> CM : create(data)
+CM --> GC : campagne créée
+GC -> NS : notifierCreation(campagne)
+NS -> App : push notification "Nouvelle campagne"
+
+== Détection et notification de retard ==
+SemM -> SemM : checkDateLimite() [samedi 00h00]
+alt semaine non payée après délai
+  SemM -> NS : notifierRetard(apprenantId, semaineId)
+  NS -> App : push notification "Retard détecté"
+else semaine payée à temps
+  SemM -> SemM : rien à faire
+end
+
+== Envoi de relance (manuelle ou automatique) ==
+Gerant -> GC : déclenche relance (manuelle ou auto)
+GC -> NS : envoyerRelance(apprenantId)
+NS -> App : push notification "Rappel de cotisation"
+NS --> GC : confirmation d'envoi
+GC --> Gerant : relance envoyée
+@enduml

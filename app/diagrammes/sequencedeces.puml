@@ -1,0 +1,33 @@
+@startuml Seq_CampagneDeces_v2
+actor Gerant
+participant "GerantController" as GC
+participant "CampagneValidator" as CV
+participant "CampagneModel" as CM
+participant "SessionManager" as SM
+participant "Apprenant" as App
+
+== Création de la campagne ==
+Gerant -> GC : POST /gerant/campagnes/create (type=deces)
+GC -> CV : validate(data)
+CV --> GC : erreurs = []
+GC -> CM : create(data)
+CM -> SM : push('campagnes', data)
+SM --> CM : ok
+CM --> GC : campagne créée (createdAt = now, delai = 7 jours)
+GC -> App : notifier(nouvelle campagne décès)
+GC --> Gerant : redirection dashboard
+
+Gerant -> GC : GET /gerant/dashboard
+GC -> CM : find(campagneId)
+CM --> GC : campagne
+GC -> CM : estExpiree()
+CM -> CM : (now - createdAt) > 7 jours ?
+alt délai dépassé
+  CM --> GC : true
+  GC -> GC : marquer campagne comme clôturée
+  GC -> App : notifier(campagne décès clôturée)
+else délai non dépassé
+  CM --> GC : false
+  GC --> Gerant : campagne toujours active
+end
+@enduml

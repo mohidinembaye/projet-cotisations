@@ -1,0 +1,87 @@
+@startuml Classe_Cotisations_v2
+class Apprenant {
+  -id : string
+  -nom : string
+  -prenom : string
+  -email : string
+  -dateInscription : date
+  -estGerant : bool
+  +getSolde() : float
+  +getRetards() : array
+}
+
+abstract class Campagne {
+  -id : string
+  -type : string
+  -createdAt : datetime
+  -dateLimite : datetime
+  +estExpiree() : bool
+  +getTotalCollecte() : float
+}
+
+class CampagneHebdo {
+  -montantFixe : float
+  -nombreSemaines : int
+}
+
+class CampagneAnniversaire {
+  -montantFixe : float
+  -moisConcerne : string
+}
+
+class CampagneDeces {
+  -delaiJours : int = 7
+}
+
+class CampagneAutre {
+  -montantDefini : float
+  -dateLimiteParametrable : date
+}
+
+class Semaine {
+  -id : int
+  -montant : float
+  -dateLimite : datetime
+  +estEnRetard() : bool
+}
+
+class Paiement {
+  -id : string
+  -apprenantId : string
+  -montant : float
+  -cibleType : string
+  -campagneId : string
+  -date : datetime
+}
+
+class Passif {
+  -id : string
+  -apprenantId : string
+  -montant : float
+  -type : string
+  -dateOrigine : date
+  -commentaire : string
+  +integrer() : void
+}
+
+class Notification {
+  -id : string
+  -destinataireId : string
+  -message : string
+  -type : string
+  -lue : bool
+  -date : datetime
+}
+
+Campagne <|-- CampagneHebdo
+Campagne <|-- CampagneAnniversaire
+Campagne <|-- CampagneDeces
+Campagne <|-- CampagneAutre
+
+Apprenant "1" -- "0..*" Paiement : effectue >
+Paiement "0..*" --> "0..1" Campagne : cible >
+Paiement "0..*" --> "0..1" Semaine : cible >
+Campagne "1" -- "0..*" Notification : génère >
+Apprenant "1" -- "0..*" Notification : reçoit >
+Apprenant "1" -- "0..*" Passif : possède >
+@enduml

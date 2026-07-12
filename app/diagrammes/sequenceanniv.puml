@@ -1,0 +1,21 @@
+@startuml Seq_Anniversaire_v2
+actor Gerant
+participant "GerantController" as GC
+participant "CampagneValidator" as CV
+participant "CampagneModel" as CM
+
+Gerant -> GC : GET /gerant/campagnes/create (type=anniversaire)
+GC -> CV : estDerniereSemaineDuMois()
+alt dernière semaine du mois
+  CV --> GC : true
+  Gerant -> GC : POST données (montant fixe)
+  GC -> CV : validate(data)
+  CV --> GC : erreurs = []
+  GC -> CM : create(data)
+  CM --> GC : campagne créée
+  GC --> Gerant : confirmation
+else hors période
+  CV --> GC : false
+  GC --> Gerant : erreur "hors période autorisée"
+end
+@enduml
