@@ -1,17 +1,12 @@
-<aside class="sidebar">
-    <div>
-        <div class="sidebar-brand">
-            <div class="brand-name">Cotisations</div>
-            <span class="brand-tag">GESTION DE CLASSE</span>
-        </div>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title><?= $title ?? 'Gestion des cotisations' ?></title>
+</head>
+<body>
 
-        <ul class="sidebar-nav">
-            <li><a href="/gerant/dashboard">Tableau de bord</a></li>
-            <li><a href="/gerant/paiements/create">Saisie paiement</a></li>
-            <li><a href="/gerant/campagnes/create">Campagnes</a></li>
-            <li><a href="/gerant/apprenants">Apprenants</a></li>
-        </ul>
-    </div>
+<?php require $page; ?>
 
-    <div class="sidebar-footer">Gérant connecté</div>
-</aside>
+</body>
+</html>
