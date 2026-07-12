@@ -1,109 +1,125 @@
 <?php
-require_once __DIR__ . '/../models/ApprenantModel.php';
+/**
+ * Authentification & Autorisation (procédural).
+ *
+ * Comptes disponibles :
+ *  - "gerant" et "coach" : comptes uniques, initialisés (seed) au démarrage.
+ *  - "apprenant" : comptes créés via auto-inscription, ajout manuel ou import
+ *    par le Gérant (stockés dans la collection "apprenants").
+ *
+ * Les mots de passe sont hashés (password_hash) même en session, par bonne
+ * pratique de sécurité.
+ */
 
+const ROLES = ['gerant', 'coach', 'apprenant'];
 
-function initialiserComptes()
+/**
+ * Initialise les comptes de démonstration une seule fois par "vie" de
+ * l'application (persistant en session tant qu'elle n'est pas détruite).
+ */
+function auth_seed_users(): void
 {
-    if (session_has('comptes')) {
+    if (session_has('users')) {
         return;
     }
 
-    $comptes = [];
-    $comptes[] = [
-        'id' => 'gerant_1',
+    $users = [];
+    $users[] = [
+        'id' => 1,
         'role' => 'gerant',
-        'prenom' => 'Admin',
-        'nom' => 'Gérant',
-        'email' => 'gerant@cotisations.test',
-        'mot_de_passe' => password_hash('gerant123', PASSWORD_DEFAULT),
+        'nom' => 'Admin Gérant',
+        'email' => 'gerant@cotisations.app',
+        'password_hash' => password_hash('gerant123', PASSWORD_DEFAULT),
     ];
-    $comptes[] = [
-        'id' => 'coach_1',
+    $users[] = [
+        'id' => 2,
         'role' => 'coach',
-        'prenom' => 'Coach',
-        'nom' => 'Superviseur',
-        'email' => 'coach@cotisations.test',
-        'mot_de_passe' => password_hash('coach123', PASSWORD_DEFAULT),
+        'nom' => 'Coach Superviseur',
+        'email' => 'coach@cotisations.app',
+        'password_hash' => password_hash('coach123', PASSWORD_DEFAULT),
     ];
 
-    session_set('comptes', $comptes);
-    initialiserApprenants();
+    session_set('users', $users);
+    session_set('_users_next_id', 3);
 }
 
-function trouverCompteParEmail($email)
+/** Retourne tous les comptes non-apprenants (gérant, coach). */
+function auth_users(): array
 {
-    foreach (session_get('comptes', []) as $compte) {
-        if (strcasecmp($compte['email'], $email) === 0) {
-            return $compte;
+    return session_get('users', []);
+}
+
+/** Trouve un utilisateur (gérant/coach) par email. */
+function auth_find_user_by_email(string $email): ?array
+{
+    foreach (auth_users() as $user) {
+        if (strcasecmp($user['email'], $email) === 0) {
+            return $user;
         }
     }
     return null;
 }
 
-
-function authentifier($email, $motDePasse)
+/**
+ * Tente une connexion en cherchant d'abord parmi les comptes gérant/coach,
+ * puis parmi les apprenants. Retourne l'utilisateur authentifié (sans le
+ * hash) ou null si échec.
+ */
+function auth_attempt(string $email, string $password): ?array
 {
-$email = strtolower(trim($email));
-    $compte = trouverCompteParEmail($email);
-    if ($compte && password_verify($motDePasse, $compte['mot_de_passe'])) {
-        ouvrirSessionUtilisateur([
-            'id' => $compte['id'],
-            'role' => $compte['role'],
-            'nom' => $compte['prenom'] . ' ' . $compte['nom'],
-            'email' => $compte['email'],
-        ]);
-        return true;
+    $email = mb_strtolower(trim($email));
+
+    $user = auth_find_user_by_email($email);
+    if ($user && password_verify($password, $user['password_hash'])) {
+        return ['id' => $user['id'], 'role' => $user['role'], 'nom' => $user['nom'], 'email' => $user['email']];
     }
 
-    $apprenant = trouverApprenantParEmail($email);
-    if ($apprenant && !empty($apprenant['mot_de_passe']) && password_verify($motDePasse, $apprenant['mot_de_passe'])) {
-        ouvrirSessionUtilisateur([
+    $apprenant = apprenant_find_by_email($email);
+    if ($apprenant && !empty($apprenant['password_hash']) && password_verify($password, $apprenant['password_hash'])) {
+        return [
             'id' => $apprenant['id'],
             'role' => 'apprenant',
             'nom' => $apprenant['prenom'] . ' ' . $apprenant['nom'],
             'email' => $apprenant['email'],
-        ]);
-        return true;
+        ];
     }
 
-    return false;
+    return null;
 }
 
-function ouvrirSessionUtilisateur($utilisateur)
+function auth_login(array $user): void
 {
+    session_set('auth_user', $user);
     session_regenerate_id(true);
-    session_set('utilisateur', $utilisateur);
+    session_set('auth_user', $user); // ré-écrit après régénération de l'id
 }
 
-function terminerSession()
+function auth_logout(): void
 {
-    $_SESSION = [];
+    session_set('auth_user', null);
     session_destroy();
 }
 
-function utilisateurConnecte()
+function auth_current_user(): ?array
 {
-    return session_get('utilisateur');
+    return session_get('auth_user');
 }
 
-function estRole($role)
+function auth_is_role(string $role): bool
 {
-    $utilisateur = utilisateurConnecte();
-    return $utilisateur !== null && $utilisateur['role'] === $role;
+    $user = auth_current_user();
+    return $user !== null && $user['role'] === $role;
 }
 
-
-function verifierRole($roles)
+/** Bloque l'accès si l'utilisateur n'a pas l'un des rôles autorisés. */
+function auth_require_role(array $roles): void
 {
-    $roles = (array) $roles;
-    $utilisateur = utilisateurConnecte();
-
-    if ($utilisateur === null) {
+    $user = auth_current_user();
+    if ($user === null) {
         flash_set('error', 'Merci de vous connecter pour accéder à cette page.');
-        rediriger('/login');
+        redirect('/login');
     }
-
-    if (!in_array($utilisateur['role'], $roles, true)) {
+    if (!in_array($user['role'], $roles, true)) {
         render_error(403, "Vous n'avez pas les droits nécessaires pour consulter cette page.");
     }
 }
