@@ -1,83 +1,86 @@
 <?php
-/**
- * Toutes les lectures/écritures de $_SESSION passent par ce fichier.
- * Aucune autre partie du code ne touche $_SESSION directement.
- */
 
-function session_manager_start()
+function session_manager_start(): void
 {
-    if (session_status() === PHP_SESSION_ACTIVE) {
-        return;
-    }
-
-    session_set_cookie_params([
-        'lifetime' => 0,
-        'path' => '/',
-        'httponly' => true,
-        'samesite' => 'Lax',
-    ]);
-
-    session_name('cotisations_sid');
-    session_start();
-
-    if (empty($_SESSION['_csrf'])) {
-        $_SESSION['_csrf'] = bin2hex(random_bytes(32));
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
     }
 }
 
-function session_get($cle, $defaut = null)
+function session_get(string $key, mixed $default = null): mixed
 {
-    return $_SESSION[$cle] ?? $defaut;
+    return $_SESSION[$key] ?? $default;
 }
 
-function session_set($cle, $valeur)
+function session_set(string $key, mixed $value): void
 {
-    $_SESSION[$cle] = $valeur;
+    $_SESSION[$key] = $value;
 }
 
-function session_has($cle)
+function session_has(string $key): bool
 {
-    return isset($_SESSION[$cle]);
+    return isset($_SESSION[$key]);
 }
 
-/* ------------------------------------------------------------------ */
-/* Messages flash — toujours renvoyés sous forme de liste, pour être  */
-/* affichés simplement avec un foreach dans les vues.                 */
-/* ------------------------------------------------------------------ */
 
-function flash_set($type, $message)
-{
-    $_SESSION['_flash'] = ['type' => $type, 'message' => $message];
-}
 
-function flash_get()
+function session_destroy_all(): void
 {
-    if (empty($_SESSION['_flash'])) {
-        return [];
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $params = session_get_cookie_params();
+        setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
     }
-    $flash = $_SESSION['_flash'];
-    unset($_SESSION['_flash']);
-    return [$flash];
+    session_destroy();
 }
 
-/* ------------------------------------------------------------------ */
-/* Protection CSRF                                                     */
-/* ------------------------------------------------------------------ */
-
-function csrf_token()
+function session_collection_push(string $key, array $item): array
 {
-    return $_SESSION['_csrf'] ?? '';
+    $collection = session_get($key, []);
+    $ids = array_column($collection, 'id');
+    $item['id'] = $ids ? max($ids) + 1 : 1;
+    $collection[] = $item;
+    session_set($key, $collection);
+    return $item;
 }
 
-function csrf_verify($token)
+function session_collection_find(string $key, int $id): ?array
 {
-    return is_string($token) && isset($_SESSION['_csrf']) && hash_equals($_SESSION['_csrf'], $token);
-}
-
-/** Vérifie le jeton envoyé en POST ; arrête la requête si invalide. */
-function csrf_verifier()
-{
-    if (!csrf_verify($_POST['csrf_token'] ?? null)) {
-        render_error(403, 'Jeton de sécurité invalide, merci de recharger la page.');
+    foreach (session_get($key, []) as $item) {
+        if ((int) $item['id'] === $id) {
+            return $item;
+        }
     }
+    return null;
+}
+
+function flash_set(string $type, string $message): void
+{
+    session_set('_flash', ['type' => $type, 'message' => $message]);
+}
+
+function flash_get(): ?array
+{
+    $flash = session_get('_flash');
+    session_set('_flash', null);
+    return $flash;
+}
+
+
+function csrf_token(): string
+{
+    if (!session_has('_csrf_token')) {
+        session_set('_csrf_token', bin2hex(random_bytes(32)));
+    }
+    return session_get('_csrf_token');
+}
+
+function csrf_field(): string
+{
+    return '<input type="hidden" name="_csrf" value="' . e(csrf_token()) . '">';
+}
+
+function csrf_verify(?string $token): bool
+{
+    return $token !== null && session_has('_csrf_token') && hash_equals(session_get('_csrf_token'), $token);
 }
