@@ -196,4 +196,5 @@ function apprenant_nb_semaines_retard(int $apprenantId): int
 function apprenant_montant_du_hebdo(int $apprenantId): float
 {
     $config = session_get('config');
-    return $config['montant_hebdo'] * apprenant_nb
+    return $config['montant_hebdo'] * apprenant_nb_semaines_retard($apprenantId);
+}

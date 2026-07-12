@@ -1,190 +1,363 @@
 <?php
-require_once __DIR__ . '/../core/Auth.php';
-require_once __DIR__ . '/../models/ApprenantModel.php';
-require_once __DIR__ . '/../models/CampagneModel.php';
-require_once __DIR__ . '/../models/PaiementModel.php';
-require_once __DIR__ . '/../models/SemaineModel.php';
-require_once __DIR__ . '/../validators/ApprenantValidator.php';
-require_once __DIR__ . '/../validators/CampagneValidator.php';
-require_once __DIR__ . '/../validators/PaiementValidator.php';
-require_once __DIR__ . '/../models/NotificationModel.php';
+/**
+ * GerantController — Cœur fonctionnel de l'Incrément 1.
+ * Tableau de bord croisé, gestion des apprenants, campagnes ponctuelles,
+ * saisie des paiements (avec ventilation automatique) et relances.
+ */
 
-function gerantDashboard()
+/** Charge le registre avant toute fonctionnalité réservée au gérant. */
+function gerant_charger_apprenants(): array
 {
-    verifierRole('gerant');
-    $erreurs = [];
-
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        csrf_verifier();
-        $montant = filter_var($_POST['montant_hebdo'] ?? null, FILTER_VALIDATE_FLOAT);
-        $nombre = filter_var($_POST['nombre_semaines'] ?? null, FILTER_VALIDATE_INT);
-
-        if ($montant === false || $montant <= 0 || $nombre === false || $nombre < 1 || $nombre > 52) {
-            $erreurs[] = 'Le montant et le nombre de semaines doivent être valides.';
-        } else {
-            parametrerCotisation($montant, $nombre);
-            flash_set('success', 'Cotisation hebdomadaire paramétrée.');
-            rediriger('/gerant/dashboard');
-        }
-    }
-
-    $apprenants = getApprenants();
-    $paiements = getPaiements();
-    $configuration = getConfigurationCotisation();
-    $total = array_sum(array_column($paiements, 'montant'));
-    $attendu = count($apprenants) * $configuration['montant'] * $configuration['nombre'];
-    $recouvrement = $attendu > 0 ? round(($total / $attendu) * 100, 1) : 0;
-    $campagnes = getCampagnes();
-    $flash = flash_get();
-
-    require __DIR__ . '/../views/gerant/dashboard.php';
+    apprenant_initialiser_registre();
+    return apprenant_all();
 }
 
-function gerantApprenants()
+/* ------------------------------------------------------------------ */
+/* Tableau de bord                                                     */
+/* ------------------------------------------------------------------ */
+
+function gerant_dashboard(): void
 {
-    verifierRole('gerant');
-    $erreurs = [];
+    auth_require_role(['gerant']);
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        csrf_verifier();
-        $action = $_POST['action'] ?? '';
+    $config = session_get('config');
+    $apprenants = gerant_charger_apprenants();
+    $semaines = semaine_all();
 
-        if ($action === 'ajouter') {
-            $erreurs = validerApprenant($_POST);
-            if (!$erreurs) {
-                ajouterApprenant([
-                    'prenom' => trim($_POST['prenom']),
-                    'nom' => trim($_POST['nom']),
-                    'email' => strtolower(trim($_POST['email'])),
-                ]);
-                flash_set('success', 'Apprenant ajouté au registre.');
-                rediriger('/gerant/apprenants');
-            }
-        }
-        if ($action === 'modifier') {
-            $id = $_POST['apprenant_id'] ?? '';
-            $erreurs = validerApprenant($_POST);
-            if (!trouverApprenant($id)) {
-                $erreurs[] = 'Apprenant introuvable.';
-            }
-            if (!$erreurs) {
-                modifierApprenant($id, [
-                    'prenom' => trim($_POST['prenom']),
-                    'nom' => trim($_POST['nom']),
-                    'email' => strtolower(trim($_POST['email'])),
-                ]);
-                flash_set('success', 'Apprenant modifié.');
-                rediriger('/gerant/apprenants');
-            }
-        }
+    $totalCollecteHebdo = array_sum(array_column(paiement_hebdo_all(), 'montant'));
+    $totalCollecteCampagnes = array_sum(array_column(paiement_campagne_all(), 'montant'));
+    $tresorerie = $totalCollecteHebdo + $totalCollecteCampagnes;
 
-        if ($action === 'supprimer') {
-            $id = $_POST['apprenant_id'] ?? '';
-            if (!supprimerApprenant($id)) {
-                $erreurs[] = 'Apprenant introuvable.';
-            } else {
-                flash_set('success', 'Apprenant supprimé.');
-                rediriger('/gerant/apprenants');
-            }
-        }
+    $semainesEchues = array_values(array_filter($semaines, fn ($s) => semaine_est_en_retard($s)));
+    $totalAttendu = count($semainesEchues) * count($apprenants) * $config['montant_hebdo'];
+    $recouvrement = $totalAttendu > 0 ? round(($totalCollecteHebdo / $totalAttendu) * 100) : 100;
 
-        if ($action === 'importer') {
-            if (empty($_FILES['fichier_csv']['tmp_name']) || $_FILES['fichier_csv']['error'] !== UPLOAD_ERR_OK) {
-                $erreurs[] = 'Sélectionnez un fichier CSV valide.';
-            } else {
-                $ajoutes = importerApprenantsCsv($_FILES['fichier_csv']['tmp_name']);
-                flash_set('success', $ajoutes . ' apprenant(s) importé(s).');
-                rediriger('/gerant/apprenants');
-            }
-        }
+    $nbRetards = 0;
+    $lignes = [];
+    foreach ($apprenants as $apprenant) {
+        $retard = apprenant_nb_semaines_retard($apprenant['id']);
+        $nbRetards += $retard > 0 ? 1 : 0;
+        $totalPaye = array_sum(array_column(paiement_hebdo_pour($apprenant['id']), 'montant'));
+        $lignes[] = [
+            'apprenant' => $apprenant,
+            'retard' => $retard,
+            'total_paye' => $totalPaye,
+            'cellules' => array_map(
+                fn ($s) => paiement_hebdo_est_payee($apprenant['id'], $s['id'])
+                    ? 'on'
+                    : (semaine_est_en_retard($s) ? 'off' : 'idle'),
+                $semaines
+            ),
+        ];
+    }
 
-        if ($action === 'passif') {
+    $campagneAnniversaireActive = null;
+    foreach (campagne_actives() as $c) {
+        if ($c['type'] === 'anniversaire') {
+            $campagneAnniversaireActive = $c;
+            break;
         }
     }
 
-    $apprenants = getApprenants();
-    $flash = flash_get();
-    require __DIR__ . '/../views/gerant/apprenants.php';
+    render('gerant/dashboard', [
+        'tresorerie' => $tresorerie,
+        'recouvrement' => $recouvrement,
+        'nbRetards' => $nbRetards,
+        'lignes' => $lignes,
+        'semaines' => $semaines,
+        'campagneAnniversaireActive' => $campagneAnniversaireActive,
+        'campagnesActives' => campagne_actives(),
+    ], 'dashboard', 'Tableau de bord — Gérant');
 }
 
-function gerantCampagnes()
+/* ------------------------------------------------------------------ */
+/* Apprenants                                                          */
+/* ------------------------------------------------------------------ */
+
+function gerant_apprenants_index(): void
 {
-    verifierRole('gerant');
-    $erreurs = [];
+    auth_require_role(['gerant']);
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        csrf_verifier();
-        $erreurs = validerCampagne($_POST);
-
-        if (!$erreurs) {
-            $type = $_POST['type'];
-            $limite = $type === 'deces'
-                ? date('c', strtotime('+7 days'))
-                : ($_POST['date_limite'] . ' 23:59:59');
-
-            ajouterCampagne([
-                'type' => $type,
-                'nom' => trim($_POST['nom']),
-                'montant' => $type === 'deces' ? null : (float) $_POST['montant'],
-                'date_limite' => $limite,
-            ]);
-            $campagne = ajouterCampagne([
-                'type' => $type,
-                'nom' => trim($_POST['nom']),
-                'montant' => $type === 'deces' ? null : (float) $_POST['montant'],
-                'date_limite' => $limite,
-            ]);
-            ajouterNotification('tous', 'Nouvelle campagne : ' . $campagne['nom']);
-
-            flash_set('success', 'Campagne créée.');
-            rediriger('/gerant/dashboard');
-
-            flash_set('success', 'Campagne créée.');
-            rediriger('/gerant/dashboard');
-        }
+    $recherche = mb_strtolower((string) query('q', ''));
+    $apprenants = gerant_charger_apprenants();
+    if ($recherche !== '') {
+        $apprenants = array_values(array_filter($apprenants, function ($a) use ($recherche) {
+            $hay = mb_strtolower($a['prenom'] . ' ' . $a['nom'] . ' ' . $a['email'] . ' ' . $a['matricule']);
+            return str_contains($hay, $recherche);
+        }));
     }
 
-    $campagnes = getCampagnes();
-    $flash = flash_get();
-    require __DIR__ . '/../views/gerant/campagnes.php';
+    render('gerant/apprenants', [
+        'apprenants' => $apprenants,
+        'recherche' => query('q', ''),
+        'erreurs' => session_get('_form_erreurs', []),
+        'old' => session_get('_form_old', []),
+    ], 'apprenants', 'Apprenants — Gérant');
+    session_set('_form_erreurs', []);
+    session_set('_form_old', []);
 }
 
-function gerantPaiement()
+function gerant_apprenants_create(): void
 {
-    verifierRole('gerant');
-    $erreurs = [];
+    auth_require_role(['gerant']);
+    require_valid_post();
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        csrf_verifier();
-        $erreurs = validerPaiement($_POST);
+    $data = [
+        'prenom' => post('prenom'),
+        'nom' => post('nom'),
+        'email' => post('email'),
+        'password' => '',
+        'date_naissance' => post('date_naissance', null) ?: null,
+    ];
 
-        if (!$erreurs) {
-            $montant = (float) $_POST['montant'];
-            $type = $_POST['type'] ?? 'hebdomadaire';
-            $semaines = $type === 'hebdomadaire' ? ventilerCotisation($_POST['apprenant_id'], $montant) : [];
+    [$succes, $resultat] = apprenant_creer($data, 'manuel');
 
-            $campagneId = null;
-            if ($type !== 'hebdomadaire') {
-                $campagne = trouverCampagneOuverte($type);
-                $campagneId = $campagne['id'] ?? null;
-            }
+    if (!$succes) {
+        session_set('_form_erreurs', $resultat);
+        session_set('_form_old', $data);
+        redirect('/gerant/apprenants');
+    }
 
-            ajouterPaiement([
-                'apprenant_id' => $_POST['apprenant_id'],
-                'montant' => $montant,
-                'type' => $type,
-                'campagne_id' => $campagneId,
-                'semaines' => $semaines,
-            ]);
+    flash_set('success', "Apprenant « {$resultat['prenom']} {$resultat['nom']} » ajouté (matricule {$resultat['matricule']}, mot de passe temporaire : {$resultat['password_genere']}).");
+    redirect('/gerant/apprenants');
+}
 
-            $message = 'Paiement enregistré' . ($semaines ? ' : semaines S' . implode(', S', $semaines) . ' validées.' : '.');
-            flash_set('success', $message);
-            rediriger('/gerant/dashboard');
+function gerant_apprenants_passif(): void
+{
+    auth_require_role(['gerant']);
+    require_valid_post();
+
+    $apprenantId = (int) post('apprenant_id');
+    $nbSemaines = max(0, (int) post('nb_semaines'));
+    $montant = max(0, (float) post('montant'));
+    $apprenant = apprenant_find($apprenantId);
+
+    if (!$apprenant || $montant <= 0) {
+        flash_set('error', 'Merci de sélectionner un apprenant et un montant valide.');
+        redirect('/gerant/apprenants');
+    }
+
+    passif_creer($apprenantId, $nbSemaines, $montant, (string) post('notes', ''));
+    flash_set('success', "Passif de " . money($montant) . " enregistré pour {$apprenant['prenom']} {$apprenant['nom']}.");
+    redirect('/gerant/apprenants');
+}
+
+/* ------------------------------------------------------------------ */
+/* Campagnes ponctuelles                                               */
+/* ------------------------------------------------------------------ */
+
+function gerant_campagnes_index(): void
+{
+    auth_require_role(['gerant']);
+
+    $campagnes = array_map(function ($c) {
+        $c['total_collecte'] = paiement_campagne_total($c['id']);
+        $c['nb_contributeurs'] = count(paiement_campagne_pour($c['id']));
+        return $c;
+    }, campagne_all());
+
+    render('gerant/campagnes', [
+        'campagnes' => $campagnes,
+        'nbApprenants' => count(gerant_charger_apprenants()),
+        'erreurs' => session_get('_form_erreurs', []),
+        'old' => session_get('_form_old', []),
+        'peutCreerAnniversaire' => !campagne_anniversaire_du_mois_existe(date('Y-m')) && semaine_dernieres_du_mois_courant() !== null,
+    ], 'campagnes', 'Campagnes — Gérant');
+    session_set('_form_erreurs', []);
+    session_set('_form_old', []);
+}
+
+function gerant_campagnes_create(): void
+{
+    auth_require_role(['gerant']);
+    require_valid_post();
+
+    $data = [
+        'type' => post('type'),
+        'nom' => post('nom'),
+        'montant_fixe' => post('montant_fixe', null),
+        'date_limite' => post('date_limite', null),
+    ];
+
+    [$succes, $resultat] = campagne_creer($data);
+
+    if (!$succes) {
+        session_set('_form_erreurs', $resultat);
+        session_set('_form_old', $data);
+        redirect('/gerant/campagnes');
+    }
+
+    flash_set('success', "Campagne « {$resultat['nom']} » créée et notifiée à tous les apprenants.");
+    redirect('/gerant/campagnes');
+}
+
+/* ------------------------------------------------------------------ */
+/* Saisie des paiements (avec ventilation automatique)                 */
+/* ------------------------------------------------------------------ */
+
+function gerant_paiements_create_show(): void
+{
+    auth_require_role(['gerant']);
+
+    $apprenantId = (int) query('apprenant_id', 0);
+    $apprenant = $apprenantId ? apprenant_find($apprenantId) : null;
+
+    $config = session_get('config');
+    $semaines = semaine_all();
+
+    $cellulesSemaines = [];
+    if ($apprenant) {
+        foreach ($semaines as $s) {
+            $cellulesSemaines[] = [
+                'semaine' => $s,
+                'payee' => paiement_hebdo_est_payee($apprenant['id'], $s['id']),
+                'retard' => semaine_est_en_retard($s),
+            ];
         }
     }
 
-    $apprenants = getApprenants();
-    $configuration = getConfigurationCotisation();
-    $flash = flash_get();
-    require __DIR__ . '/../views/gerant/saisie-paiement.php';
+    render('gerant/saisie-paiement', [
+        'apprenants' => gerant_charger_apprenants(),
+        'apprenant' => $apprenant,
+        'montantHebdo' => $config['montant_hebdo'],
+        'cellulesSemaines' => $cellulesSemaines,
+        'campagneAnniversaire' => campagne_active_par_type('anniversaire'),
+        'campagneDeces' => campagne_active_par_type('deces'),
+        'totalCollecteJour' => paiements_total_du_jour(),
+        'erreurs' => session_get('_form_erreurs', []),
+    ], 'saisie-paiement', 'Saisie Paiement — Gérant');
+    session_set('_form_erreurs', []);
+}
+
+function campagne_active_par_type(string $type): ?array
+{
+    foreach (campagne_actives() as $c) {
+        if ($c['type'] === $type) {
+            return $c;
+        }
+    }
+    return null;
+}
+
+/** Somme de tous les paiements (hebdo + campagnes) enregistrés aujourd'hui. */
+function paiements_total_du_jour(): float
+{
+    $today = date('Y-m-d');
+    $total = 0.0;
+    foreach (paiement_hebdo_all() as $p) {
+        if (str_starts_with($p['date_paiement'], $today)) {
+            $total += $p['montant'];
+        }
+    }
+    foreach (paiement_campagne_all() as $p) {
+        if (str_starts_with($p['date_paiement'], $today)) {
+            $total += $p['montant'];
+        }
+    }
+    return $total;
+}
+
+function gerant_paiements_create_submit(): void
+{
+    auth_require_role(['gerant']);
+    require_valid_post();
+
+    $data = [
+        'apprenant_id' => post('apprenant_id'),
+        'type_paiement' => post('type_paiement'),
+        'montant' => post('montant'),
+        'campagne_id' => post('campagne_id', null),
+    ];
+
+    $erreurs = validate_paiement($data);
+    if ($erreurs) {
+        session_set('_form_erreurs', $erreurs);
+        redirect('/gerant/paiements/create?apprenant_id=' . (int) $data['apprenant_id']);
+    }
+
+    $apprenantId = (int) $data['apprenant_id'];
+    $apprenant = apprenant_find($apprenantId);
+    $montant = (float) $data['montant'];
+
+    if ($data['type_paiement'] === 'hebdo') {
+        $resultat = paiement_hebdo_ventiler($apprenantId, $montant);
+        $nbSemaines = count($resultat['semaines_payees']);
+        $liste = $nbSemaines ? implode(', S', $resultat['semaines_payees']) : '';
+        $message = $nbSemaines
+            ? "Paiement de " . money($montant) . " ventilé automatiquement sur {$nbSemaines} semaine(s) : S{$liste}."
+            : "Paiement enregistré en crédit (" . money($resultat['reliquat']) . ") : montant insuffisant pour couvrir une semaine complète.";
+    } else {
+        $campagneId = (int) $data['campagne_id'];
+        paiement_campagne_creer($campagneId, $apprenantId, $montant);
+        $campagne = campagne_find($campagneId);
+        $message = "Contribution de " . money($montant) . " enregistrée pour la campagne « {$campagne['nom']} ».";
+    }
+
+    flash_set('success', "{$apprenant['prenom']} {$apprenant['nom']} — {$message} Une quittance a été générée.");
+    redirect('/gerant/paiements/create?apprenant_id=' . $apprenantId);
+}
+
+/* ------------------------------------------------------------------ */
+/* Relances                                                             */
+/* ------------------------------------------------------------------ */
+
+function gerant_relances_index(): void
+{
+    auth_require_role(['gerant']);
+
+    $retardataires = [];
+    foreach (gerant_charger_apprenants() as $apprenant) {
+        $retard = apprenant_nb_semaines_retard($apprenant['id']);
+        if ($retard > 0) {
+            $retardataires[] = [
+                'apprenant' => $apprenant,
+                'nb_semaines_retard' => $retard,
+                'montant_du' => apprenant_montant_du_hebdo($apprenant['id']),
+                'derniere_relance' => relance_derniere_pour($apprenant['id']),
+            ];
+        }
+    }
+
+    usort($retardataires, fn ($a, $b) => $b['nb_semaines_retard'] <=> $a['nb_semaines_retard']);
+
+    render('gerant/relances', [
+        'retardataires' => $retardataires,
+    ], 'relances', 'Relances — Gérant');
+}
+
+function relance_all(): array
+{
+    return session_get('relances', []);
+}
+
+function relance_derniere_pour(int $apprenantId): ?array
+{
+    $dernieres = array_values(array_filter(relance_all(), fn ($r) => (int) $r['apprenant_id'] === $apprenantId));
+    if (!$dernieres) {
+        return null;
+    }
+    usort($dernieres, fn ($a, $b) => strtotime($b['date_envoi']) <=> strtotime($a['date_envoi']));
+    return $dernieres[0];
+}
+
+function gerant_relances_marquer(): void
+{
+    auth_require_role(['gerant']);
+    require_valid_post();
+
+    $apprenantId = (int) post('apprenant_id');
+    $apprenant = apprenant_find($apprenantId);
+    if (!$apprenant) {
+        flash_set('error', 'Apprenant introuvable.');
+        redirect('/gerant/relances');
+    }
+
+    session_collection_push('relances', [
+        'apprenant_id' => $apprenantId,
+        'date_envoi' => date('Y-m-d H:i:s'),
+        'canal' => 'manuel',
+    ]);
+
+    flash_set('success', "Relance envoyée à {$apprenant['prenom']} {$apprenant['nom']}.");
+    redirect('/gerant/relances');
 }
